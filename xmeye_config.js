@@ -23,7 +23,7 @@ module.exports = function (RED) {
 
       this.on('close', this.onClose.bind(this));
 
-      this.access = new xmeyecam({ this.ip, this.port, this.timeout });
+      this.access = new xmeyecam({ camIp: this.ip, camMediaPort: this.port, commandTimeoutMs: this.timeout });
     }
 
     onClose(done) {
