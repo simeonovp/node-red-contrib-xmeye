@@ -1,0 +1,48 @@
+<script type="text/javascript">
+  RED.nodes.registerType('xmeye_device',{
+    category: 'Xmeye',
+    color: '#7171d5',
+    defaults: {
+      name: {value:""},
+      deviceConfig: {value:"", type: "xmeye-config"},
+      action: {value:"", required: false}
+    },          
+    inputs:1,
+    outputs:1,
+    icon: "device.png",
+    label: function() {
+      return this.name || "Xmeye device";
+    },
+    oneditsave: function() {
+    }
+  });
+</script>
+
+<script type="text/x-red" data-template-name="template_mynode">
+  <div class="form-row">
+    <label for="node-input-deviceConfig"><i class="fa fa-cog"></i> Device</label>
+    <!-- Node-Red will replace this input element by a drop-down (with available Xmeye device configurations) -->
+    <input type="text" id="node-input-deviceConfig">
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-action"><i class="fa fa-wrench"></i> Action</label>
+    <select id="node-input-action">
+      <option value=""></option>
+      <option value="parValue1">First valid value</option>
+    </select>
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/x-red" data-help-name="template_mynode">
+  <p>A node to get extra information about an Xmeye device.</p>
+  <p><strong>Device:</strong><br/>
+  The target Xmeye device.</p>
+  <p><strong>Action:</strong><br/>
+  The action that needs to be executed on the target device.  When no action is selected, the action should be specified in the <code>msg.action</code> field of the input message.</p>
+</script>
