@@ -1,34 +1,34 @@
 module.exports = function (RED) {
   'use strict'
-  let settings = RED.settings;
-  const utils = require('./utils');
+  var settings = RED.settings;
+  //sip?? const utils = require('./utils');
 
-  class XmeyeDeviceNode {
-    constructor(config) {
-      RED.nodes.createNode(this, config);
+  function XmeyeDeviceNode(config) {
+    console.log('--- enter XmeyeDeviceNode');
+    console.log('--- config ' + config.toString());
 
-      this.deviceConfig = RED.nodes.getNode(config.deviceConfig);
-      this.action = config.action;
+    RED.nodes.createNode(this, config);
 
-      if (this.deviceConfig) {
-        // Start listening for xmeye config node status changes
-        this.deviceConfig.addListener('xmeye_status', this.onStatus);
+    this.deviceConfig = RED.nodes.getNode(config.deviceConfig);
+    console.log('--- config.deviceConfig ' + config.deviceConfig);
 
-        // Show the current xmeye config node status already
-        utils.setNodeStatus(this, 'device', this.deviceConfig.xmeyeStatus);
+    this.action = config.action;
 
-        this.deviceConfig.initialize();
-      }
+    if (this.deviceConfig) {
+      // Start listening for xmeye config node status changes
+      this.deviceConfig.addListener('xmeye_status', this.onStatus);
 
-      this.on('input', this.onInput.bind(this));
-      this.on('close', this.onClose.bind(this));
+      // Show the current xmeye config node status already
+      //sip++ utils.setNodeStatus(this, 'device', this.deviceConfig.xmeyeStatus);
+
+      this.deviceConfig.initialize();
     }
 
-    onInput (msg, send, done) {
+    this.on('input', function(msg, send, done) {
       const action = this.action || msg.action;
 
       if (!action) {
-        console.warn('When no action specified in the node, it should be specified in the msg.myparam');
+        this.warn('When no action specified in the node, it should be specified in the msg.myparam');
         return;
       }
 
@@ -39,39 +39,47 @@ module.exports = function (RED) {
             return;
           default:
             //node.status({fill:"red",shape:"dot",text: "unsupported action"});
-            node.error("Action " + action + " is not supported");                    
+            if (done) {
+              done.error("Action " + action + " is not supported");                    
+              return;
+            }
+            else this.error("Action " + action + " is not supported");                    
         }
       }
       catch (exc) {
-          node.error("Action " + action + " failed: " + exc);
+        if (done) {
+          done.error("Action " + action + " failed: " + exc);
+          return;
+        }
+        else this.error("Action " + action + " failed: " + exc);
       }
 
-      done();
-    }
+      if (done) done();
+    });
 
-    onClose(done) {
+    this.on('close', function(done) {
       if (this.listener) {
         this.deviceConfig.removeListener('xmeye_status', this.onStatus);
       }
-      done();
+      if (done) done();
+    });
+
+    this.onStatus = function(status) {
+      //sip++ utils.setNodeStatus(this, 'device', status);
     }
 
-    onStatus(status) {
-      utils.setNodeStatus(this, 'device', status);
-    }
-
-    async executeHelper(msg, done) {
+    this.executeHelper = async function(msg, done) {
       const resp = await this.access.queryFiles(msg.Command, msg.MessageName, msg.MessageData);
       if (resp && resp.data) {
         this.send({payload: resp.data});
       }
-      done();
+      if (done) done();
     }
 
-    async queryFiles(msg, done) {
+    this.queryFiles = async function(msg, done) {
       const resp = await this.access.queryFiles(msg.begin, msg.end); //--('2020-06-26 00:00:00', '2020-06-26 23:59:59');
       if (resp && resp.data) {
-        console.log("Record count " + resp.data.length);
+        this.log("Record count " + resp.data.length);
         resp.data.forEach(rec => {
           // rec.FileName, rec.BeginTime, rec.EndTime, rec.FileLength
 
@@ -96,19 +104,19 @@ module.exports = function (RED) {
       }
       else {
       }
-      done();
+      if (done) done();
     }
 
     // // play sd record
     // xmeye_playback = async (cam, req, res) => {
     //   if (!cam.access) {
-    //     console.error('cam access object missing for ' + cam.host);
+    //     this.error('cam access object missing for ' + cam.host);
     //     return; //TODO throw
     //   }
 
     //   const server = req.app.srv;
     //   if (!server) {
-    //     console.log('no server defined in req');
+    //     this.log('no server defined in req');
     //     return; //TODO throw
     //   }
 
@@ -135,35 +143,35 @@ module.exports = function (RED) {
     //     ];
     //     let streamer = new WebStreamerServer(server, opts, ffmpegargs, inst => {
     //       streamers.delete(inst);
-    //       console.log('streamers count after delete is ' + streamers.size);
+    //       this.log('streamers count after delete is ' + streamers.size);
     //     });
 
     //     streamer.onstart = async()=>{
-    //       // console.log('ffmpeg started, now get record from cam');
+    //       // this.log('ffmpeg started, now get record from cam');
     //       let ffmpeg = streamer.ffmpeg;
 
     //       try {
     //         cam.access.on('videostream:lost', ()=>{
-    //           console.log('Cam videostream:lost');
+    //           this.log('Cam videostream:lost');
     //           cam.access.disconnect();
     //         });
         
     //         let { video, audio } = await cam.access.reqPlayback(req.query, { Username: 'admin', Password: '888888' }, ffmpeg.stdin);
-    //         console.log('Got stream!');
+    //         this.log('Got stream!');
     //       }
     //       catch (e) {
-    //         console.log('Failed (1):', e);
+    //         this.log('Failed (1):', e);
     //         cam.access.disconnect();
     //       }
     //     };
         
     //     res.render('player', { doc: req.originalUrl });
     //     streamers.add(streamer);
-    //     console.log('streamers count after add is ' + streamers.size);
+    //     this.log('streamers count after add is ' + streamers.size);
     //     //TODO start watchdog for start_feed
     //   }
     //   catch (e) {
-    //     console.log('Failed (2):', e);
+    //     this.log('Failed (2):', e);
     //     cam.access.disconnect();
     //   }
     // }
@@ -171,24 +179,24 @@ module.exports = function (RED) {
     // // play sd record
     // xmeye_playback2 = async (cam, req, res) => {
     //   if (!cam.access) {
-    //     console.error('cam access object missing for ' + cam.host);
+    //     this.error('cam access object missing for ' + cam.host);
     //     return; //TODO throw
     //   }
 
     //   const server = req.app.srv;
     //   if (!server) {
-    //     console.error('ERROR: No server defined in req');
+    //     this.error('ERROR: No server defined in req');
     //     return; //TODO throw
     //   }
 
     //   //Exmpl. /cam13/sd/idea0/2020-06-26/001/03.20.22-03.23.14[R][@41][0].h264
     //   const parts = req.path.split('/');
     //   if (parts.length < 7) {
-    //     console.error('ERROR: Playback path too short');
+    //     this.error('ERROR: Playback path too short');
     //     return;
     //   }
     //   if (parts[3] !== 'idea0') {
-    //     console.error('ERROR: Missing "idea0" in path');
+    //     this.error('ERROR: Missing "idea0" in path');
     //     return;
     //   }
 
@@ -219,40 +227,42 @@ module.exports = function (RED) {
     //     ];
     //     let streamer = new WebStreamerServer(server, opts, ffmpegargs, inst => {
     //       streamers.delete(inst);
-    //       console.log('streamers count after delete is ' + streamers.size);
+    //       this.log('streamers count after delete is ' + streamers.size);
     //     });
 
     //     streamer.onstart = async()=>{
-    //       // console.log('ffmpeg started, now get record from cam');
+    //       // this.log('ffmpeg started, now get record from cam');
     //       let ffmpeg = streamer.ffmpeg;
 
     //       try {
     //         cam.access.on('videostream:lost', ()=>{
-    //           console.log('Cam videostream:lost');
+    //           this.log('Cam videostream:lost');
     //           cam.access.disconnect();
     //         });
 
     //         let { video, audio } = await cam.access.reqPlayback(
     //           { FileName, BeginTime, EndTime }, 
     //           { Username: 'admin', Password: '888888' }, ffmpeg.stdin);
-    //         console.log('Got stream!');
+    //         this.log('Got stream!');
     //       }
     //       catch (e) {
-    //         console.log('Failed (1):', e);
+    //         this.log('Failed (1):', e);
     //         cam.access.disconnect();
     //       }
     //     };
         
     //     res.render('player', { doc: req.originalUrl });
     //     streamers.add(streamer);
-    //     console.log('streamers count after add is ' + streamers.size);
+    //     this.log('streamers count after add is ' + streamers.size);
     //     //TODO start watchdog for start_feed
     //   }
     //   catch (e) {
-    //     console.log('Failed (2):', e);
+    //     this.log('Failed (2):', e);
     //     cam.access.disconnect();
     //   }
     // }
+
+    console.log('--- leave XmeyeDeviceNode');
   }
 
   RED.nodes.registerType("xmeye-device", XmeyeDeviceNode);

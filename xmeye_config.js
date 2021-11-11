@@ -1,64 +1,62 @@
 module.exports = function (RED) {
   'use strict'
-  let settings = RED.settings;
+  var settings = RED.settings;
   const 
-    xmeyecam = require('./lib/dvripclient'),
-    utils = require('./utils');
+    //xmeyecam = require('./lib/dvripclient'),
+    //sip?? utils = require('./utils');
 
-  class XmeyeConfigNode {
-    constructor(config) {
-      RED.nodes.createNode(this, config);
+  function XmeyeConfigNode(config) {
+    console.log('--- enter XmeyeConfigNode');
 
-      this.ip = config.ip;
-      this.port = parseInt(config.port || 34567);
-      this.user = config.user;
-      this.password = config.password;
-      this.timeout = parseInt(config.timeout || 5000);
-      this.name = config.name;
-      
-      this.setMaxListeners(0); // by default only 10 listeners are allowed
+    RED.nodes.createNode(this, config);
 
-      // Retrieve the config node, where the device is configured
-      this.mynodeConfig = RED.nodes.getNode(config.mynodeConfig);
+    this.ip = config.ip;
+    this.port = parseInt(config.port || 34567);
+    this.timeout = parseInt(config.timeout || 5000);
+    this.name = config.name;
+    
+    this.setMaxListeners(0); // by default only 10 listeners are allowed
 
-      this.on('close', this.onClose.bind(this));
-
-      this.access = new xmeyecam({ camIp: this.ip, camMediaPort: this.port, commandTimeoutMs: this.timeout });
-    }
-
-    onClose(done) {
+    this.on('close', function(done) {
       if (this.access) this.access.disconnect();
       setXmeyeStatus(this, '');
       this.removeAllListeners('xmeye_status');
-      done();
-    }
+      if (done) done();
+    });
 
-    setXmeyeStatus(status) {
+    this.setXmeyeStatus = function (status) {
       this.xmeyeStatus = status;
       // Pass the new status to all listeners
       this.emit('xmeye_status', status);
     }
 
-    async connect() {
+    this.access = null; //sip++ new xmeyecam({ camIp: this.ip, camMediaPort: this.port, commandTimeoutMs: this.timeout });
+
+    this.connect = async function() {
       if (!this.access) {
-        console.error('cam access object missing for ' + this.name);
+        this.error('cam access object missing for ' + this.name);
         return;
       }
     
       try {
         await this.access.connect();
-        console.log("-- Connected!");
+        this.log("-- Connected!");
     
-        await this.access.login({ Username: this.user, Password: this.password });
-        console.log("-- Logged in!");
+        await this.access.login({ Username: this.credentials.user, Password: this.credentials.password });
+        this.log("-- Logged in!");
       }
       catch (e) {
-        console.log("Failed (3):", e);
+        this.log("Failed (3):", e);
         this.access.disconnect();
       }
     }
-    
+    console.log('--- leave XmeyeConfigNode');
   }
 
-  RED.nodes.registerType('xmeye-config', XmeyeConfigNode);
+  RED.nodes.registerType('xmeye-config', XmeyeConfigNode, {
+    credentials: {
+      user: {type:"text"},
+      password: {type: "password"}
+    }
+  });
 }

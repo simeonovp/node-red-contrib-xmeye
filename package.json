@@ -3,6 +3,7 @@
 	"version"      : "0.0.1-beta.1",
 	"description"  : "Node Red nodes for support of Xmeye devices",
 	"dependencies": {
+    "binary-parser": "^1.3.2"
 	},
 	"author": {
 		"name": "Peter Simeonov"
@@ -16,11 +17,11 @@
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/simeonovp/simeonovp/node-red-contrib-xmeye.git"
-	},
+  },
 	"node-red"     : {
 		"nodes": {
-			"xmeye_config": "xmeye_config.js",
-			"xmeye_device": "xmeye_device.js"
+			"xmeye-config": "xmeye_config.js",
+			"xmeye-device": "xmeye_device.js"
 		}
 	}
 }
