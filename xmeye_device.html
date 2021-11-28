@@ -5,10 +5,11 @@
     defaults: {
       name: {value:""},
       deviceConfig: {value:"", type: "xmeye-config"},
+      logDir: {value:""},
       action: {value:"", required: false}
     },          
     inputs:1,
-    outputs:1,
+    outputs:3,
     icon: "device.png",
     label: function() {
       return this.name || "Xmeye device";
@@ -25,6 +26,10 @@
     <input type="text" id="node-input-deviceConfig">
   </div>
   <br>
+  <div class="form-row">
+    <label for="node-input-logDir"><i class="icon-tag"></i> Log dir</label>
+    <input type="text" id="node-input-logDir" placeholder="data/logs">
+  </div>
   <div class="form-row">
     <label for="node-input-action"><i class="fa fa-wrench"></i> Action</label>
     <select id="node-input-action">

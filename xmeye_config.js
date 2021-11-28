@@ -1,10 +1,10 @@
 module.exports = function (RED) {
   'use strict'
-  //?? let settings = RED.settings;
-  const 
-    xmeyecam = require('./lib/dvripclient')
-    //sip?? , utils = require('./utils')
-    ;
+  //?? const settings = RED.settings;
+  const xmeyecam = require('./lib/dvripclient');
+  const fs = require('fs');
+  const path = require('path');
+  const objectPath = require('object-path');
 
   class XmeyeConfigNode {
     constructor(config) {
@@ -15,13 +15,17 @@ module.exports = function (RED) {
       this.user = config.user || this.credentials.user;
       this.password = config.password || this.credentials.password;
       this.timeout = parseInt(config.timeout || 5000);
+      this.configDir = config.configDir || '';
       this.name = config.name;
       
       this.setMaxListeners(0); // by default only 10 listeners are allowed
 
       this.on('close', this.onClose.bind(this));
 
+      this.cfgPath = this.configDir ? path.join(this.configDir, (this.name || 'noname') + '.json') : '';
+      this.devConfig = {};
       this.access = null;
+      this.accessSettings = { camIp: this.ip, camMediaPort: this.port, commandTimeoutMs: this.timeout };
     }
 
     initialize() {
@@ -35,14 +39,30 @@ module.exports = function (RED) {
         return;
       }
 
+      this.loadConfig();
+
       this.setStatus('initializing');
-      this.access = new xmeyecam({ camIp: this.ip, camMediaPort: this.port, commandTimeoutMs: this.timeout });
-      
+      this.access = new xmeyecam(this.accessSettings);
+    
       this.connect();
     }
 
+    loadConfig() {
+      if (!this.cfgPath || !fs.existsSync(this.cfgPath)) return;
+      return JSON.parse(fs.readFileSync(this.cfgPath, 'utf8'));
+    }
+
+    saveConfig() {
+      if (!this.cfgPath) return;
+      fs.createWriteStream(this.cfgPath).write(JSON.stringify(this.devConfig, null, 2));
+    }
+
+    updateConfig(group, name, value) {
+      if (!this.devConfig[group]) this.devConfig[group] = {};
+      objectPath.set(this.devConfig[group], name.replace(/(\[|\])/g, ''), value);
+    }
+
     onClose(done) {
-      this.log('--- enter XmeyeConfigNode onClose');
       if (this.access) this.access.disconnect();
       this.setStatus(this, '');
       this.removeAllListeners('xmeye_status');
@@ -50,16 +70,14 @@ module.exports = function (RED) {
     }
 
     setStatus(status) {
-      this.log('--- enter XmeyeConfigNode setXmeyeStatus');
       this.xmeyeStatus = status;
       // Pass the new status to all listeners
       this.emit('xmeye_status', status);
     }
 
     async connect() {
-      this.log('--- enter XmeyeConfigNode connect');
       if (!this.access) {
-        this.error('cam access object missing for ' + this.name);
+        this.error('cam access object missing (0) for ' + this.name);
         return;
       }
     
@@ -78,7 +96,6 @@ module.exports = function (RED) {
         this.log("Failed connect:" + e);
       }
     }
- 
   }
 
   RED.nodes.registerType('xmeye-config', XmeyeConfigNode, {
