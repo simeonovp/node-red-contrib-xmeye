@@ -5,14 +5,67 @@
     defaults: {
       name: {value:""},
       deviceConfig: {value:"", type: "xmeye-config"},
-      logDir: {value:""},
       action: {value:"", required: false}
     },          
     inputs:1,
     outputs:3,
-    icon: "device.png",
+    icon: "config.png",
     label: function() {
       return this.name || "Xmeye device";
+    },
+    oneditsave: function() {
+    }
+  });
+
+  RED.nodes.registerType('xmeye-playback',{
+    category: 'Xmeye',
+    color: '#7171d5',
+    defaults: {
+      name: {value:""},
+      deviceConfig: {value:"", type: "xmeye-config"},
+      logDir: {value:""},
+    },          
+    inputs:1,
+    outputs:1,
+    icon: "recording.png",
+    label: function() {
+      return this.name || "Xmeye playback";
+    },
+    oneditsave: function() {
+    }
+  });
+
+  RED.nodes.registerType('xmeye-frame-parser',{
+    category: 'Xmeye',
+    color: '#7171d5',
+    defaults: {
+      name: {value:""},
+      deviceConfig: {value:"", type: "xmeye-config"},
+      action: {value:"", required: false}
+    },          
+    inputs:1,
+    outputs:1,
+    icon: "event.png",
+    label: function() {
+      return this.name || "Xmeye frame parser";
+    },
+    oneditsave: function() {
+    }
+  });
+
+  RED.nodes.registerType('xmeye-frame-builder',{
+    category: 'Xmeye',
+    color: '#7171d5',
+    defaults: {
+      name: {value:""},
+      deviceConfig: {value:"", type: "xmeye-config"},
+      action: {value:"", required: false}
+    },          
+    inputs:1,
+    outputs:1,
+    icon: "ptz.png",
+    label: function() {
+      return this.name || "Xmeye frame parser";
     },
     oneditsave: function() {
     }
@@ -27,15 +80,55 @@
   </div>
   <br>
   <div class="form-row">
-    <label for="node-input-logDir"><i class="icon-tag"></i> Log dir</label>
-    <input type="text" id="node-input-logDir" placeholder="data/logs">
-  </div>
-  <div class="form-row">
     <label for="node-input-action"><i class="fa fa-wrench"></i> Action</label>
     <select id="node-input-action">
       <option value=""></option>
       <option value="parValue1">First valid value</option>
     </select>
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/html" data-template-name="xmeye-playback">
+  <div class="form-row">
+    <label for="node-input-deviceConfig"><i class="fa fa-cog"></i> Device</label>
+    <!-- Node-Red will replace this input element by a drop-down (with available Xmeye device configurations) -->
+    <input type="text" id="node-input-deviceConfig">
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-logDir"><i class="icon-tag"></i> Log dir</label>
+    <input type="text" id="node-input-logDir" placeholder="data/logs">
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/html" data-template-name="xmeye-frame-parser">
+  <div class="form-row">
+    <label for="node-input-deviceConfig"><i class="fa fa-cog"></i> Device</label>
+    <!-- Node-Red will replace this input element by a drop-down (with available Xmeye device configurations) -->
+    <input type="text" id="node-input-deviceConfig">
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/html" data-template-name="xmeye-frame-builder">
+  <div class="form-row">
+    <label for="node-input-deviceConfig"><i class="fa fa-cog"></i> Device</label>
+    <!-- Node-Red will replace this input element by a drop-down (with available Xmeye device configurations) -->
+    <input type="text" id="node-input-deviceConfig">
   </div>
   <br>
   <div class="form-row">
@@ -50,4 +143,24 @@
   The target Xmeye device.</p>
   <p><strong>Action:</strong><br/>
   The action that needs to be executed on the target device.  When no action is selected, the action should be specified in the <code>msg.action</code> field of the input message.</p>
+</script>
+
+<script type="text/html" data-help-name="xmeye-playback">
+  <p>A node to get extra information about an Xmeye device.</p>
+  <p><strong>Device:</strong><br/>
+  The target Xmeye device.</p>
+  <p><strong>LogDir:</strong><br/>
+  The directory path used to store the downloaded rcords. When no path is selected, the default path: /data/logs will be used.</p>
+</script>
+
+<script type="text/html" data-help-name="xmeye-frame-parser">
+  <p>A node to get extra information about an Xmeye device.</p>
+  <p><strong>Device:</strong><br/>
+  The target Xmeye device.</p>
+</script>
+
+<script type="text/html" data-help-name="xmeye-frame-builder">
+  <p>A node to get extra information about an Xmeye device.</p>
+  <p><strong>Device:</strong><br/>
+  The target Xmeye device.</p>
 </script>

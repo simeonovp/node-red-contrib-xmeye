@@ -1,9 +1,10 @@
 module.exports = function (RED) {
   'use strict'
-  //?? const settings = RED.settings;
-  const xmeyecam = require('./lib/dvripclient');
+  const ResponseCodes = require('./lib/ResponseCodes');
+  const Connection = require('./lib/Connection');
   const fs = require('fs');
   const path = require('path');
+  const { createHash } = require('crypto');
   const objectPath = require('object-path');
 
   class XmeyeConfigNode {
@@ -14,6 +15,7 @@ module.exports = function (RED) {
       this.port = parseInt(config.port || 34567);
       this.user = config.user || this.credentials.user;
       this.password = config.password || this.credentials.password;
+      this.useHash = true;
       this.timeout = parseInt(config.timeout || 5000);
       this.configDir = config.configDir || '';
       this.name = config.name;
@@ -22,19 +24,19 @@ module.exports = function (RED) {
 
       this.on('close', this.onClose.bind(this));
 
+      if (this.configDir && !fs.existsSync(config.configDir)) fs.mkdirSync(config.configDir, { recursive: true });
       this.cfgPath = this.configDir ? path.join(this.configDir, (this.name || 'noname') + '.json') : '';
       this.devConfig = {};
-      this.access = null;
+      this.connection;
       this.accessSettings = { camIp: this.ip, camMediaPort: this.port, commandTimeoutMs: this.timeout };
     }
 
     initialize() {
-      if (this.access) return;
+      if (this.connection) return;
 
       if (!this.ip) {
         this.error( "Cannot connect due to IP of the Xmeye device not configured", {} );
            
-        this.access = null;
         this.setStatus('unconfigured');
         return;
       }
@@ -42,7 +44,7 @@ module.exports = function (RED) {
       this.loadConfig();
 
       this.setStatus('initializing');
-      this.access = new xmeyecam(this.accessSettings);
+      this.connection = new Connection(this.accessSettings);
     
       this.connect();
     }
@@ -63,7 +65,7 @@ module.exports = function (RED) {
     }
 
     onClose(done) {
-      if (this.access) this.access.disconnect();
+      if (this.connection) this.connection.disconnect();
       this.setStatus(this, '');
       this.removeAllListeners('xmeye_status');
       if (done) done();
@@ -75,26 +77,99 @@ module.exports = function (RED) {
       this.emit('xmeye_status', status);
     }
 
+    get sessionId() { return this.connection ? this.connection.sessionId : null; }
+
     async connect() {
-      if (!this.access) {
-        this.error('cam access object missing (0) for ' + this.name);
+      if (!this.connection) {
+        this.error('cam connection object missing (0) for ' + this.name);
         return;
       }
     
       try {
-        await this.access.connect();
+        await this.connection.connect();
         this.setStatus('login');
         this.log("Connected!");
     
-        await this.access.login({ Username: this.user, Password: this.password });
+        await this.login();
         this.setStatus('connected');
         this.log("Logged in!");
       }
       catch (e) {
-        this.access.disconnect();
-        this.setStatus('disconnected');
-        this.log("Failed connect:" + e);
+        this.disconnect().catch(e=>{this.log("Failed connect (1):" + e);});
+        this.log("Failed connect (2):" + e);
       }
+    }
+    
+    disconnect() {
+      if (!this.connection) {
+        this.error('cam connection object missing (0) for ' + this.name);
+        return Promise.resolve();
+      }
+      this.setStatus('disconnected');
+      return this.connection.disconnect();
+    }
+
+    //TODO (currently not used)
+    async login() {
+      if (this.connection.isLoggedIn) throw 'Already logged in';
+
+      this.connection.resetSeqCounter();
+
+      //Absolutely stupid custom password 'hashing'. Special thanks to https://github.com/tothi/pwn-hisilicon-dvr#password-hash-function
+      //There isnt really any protection involved with this... An attacker can just as well sniff the hash and use that to authenticate.
+      //By checking out the Github link you should come to the conclusion that any device of this kind should *never* be directly
+      //exposed to the internet anways.
+      let PassWord = this.password;
+      if (this.useHash) {
+        const pw_md5 = createHash('md5').update(PassWord).digest();
+        let HashBuilder = '';
+
+        for (let i = 0; i < 8; i++) {
+          let n = (pw_md5[2 * i] + pw_md5[2 * i + 1]) % 62;
+          if (n > 9) n += (n > 35) ? 13 : 7;
+          HashBuilder += String.fromCharCode(n + 48);
+        }
+
+        PassWord = HashBuilder;
+      }
+
+      const Response = await this.connection.sendMessage({
+        Command: 'LOGIN_REQ2',
+        MessageData: {
+          EncryptType: this.useHash ? 'MD5' : 'NONE',
+          LoginType: 'DVRIP-Node',
+          UserName: this.user,
+          PassWord
+        }
+      });
+
+      if (!Response.Ret || (Response.Ret !== 100)) throw `Login response returns (${Response.Ret} ${ResponseCodes.ErrorCodes[Response.Ret] || 'Unknown error'})!`;
+
+      if (!Response.SessionID || !Response.SessionID.length) throw 'Login response did not contain a Session Id with a known field!';
+
+      const sessionID = parseInt(Response.SessionID.toString());
+      if (!sessionID) throw 'Login response contain a Session Id ' + Response.SessionID;
+
+      this.connection.setSessionId(Response.SessionID);
+
+      if (Response.data.AliveInterval) this.setupAliveKeeper(Response.data.AliveInterval);
+    }
+
+    sendMessage(msg) {
+      if (this.connection) return this.connection.sendMessage(msg); // : Promise.resolve();
+      throw 'cam connection object missing for ' + this.host;
+    }
+
+    setupAliveKeeper(interval) {
+      this.connection.setupAliveKeeper({
+        MessageName: 'KeepAlive',
+        Command: 'KEEPALIVE_REQ',
+        IgnoreResponse: true
+      }, interval);
+    }
+
+    createConnection() {
+      return this.connection ? this.connection.clone() : null;
     }
   }
 

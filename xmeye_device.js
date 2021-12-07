@@ -2,8 +2,11 @@ module.exports = function (RED) {
   'use strict'
   const path = require('path');
   const fs = require('fs');
-  const StreamClient = require('./lib/dvripstreamclient.js');
   const ResponseCodes = require('./lib/ResponseCodes');
+  const MessageIds = require('./lib/Messages');
+  const FrameParser = require('./lib/FrameParser');
+  const FrameAssembler = require('./lib/FrameAssembler');
+  const FrameBuilder = require('./lib/FrameBuilder');
 
   const configKeys = [
     'System.ExUserMap',
@@ -65,20 +68,22 @@ module.exports = function (RED) {
     'MaxPreRecord'
   ];
 
-  class XmeyeDeviceNode {
+  const cfgGroups = {
+    CONFIG_GET: 'Config',
+    CHANNEL_ABILITY_GET: 'ChannelAbility',
+    ABILITY_GET: 'Ability',
+    SYSINFO_REQ: 'SysInfo',
+    CONFIG_CHANNELTITLE_GET: 'Channel'
+    //FULLAUTHORITYLIST_GET
+    //USERS_GET
+  };
+
+  class XmeyeBase {
     constructor(config) {
       RED.nodes.createNode(this, config);
 
       this.deviceConfig = RED.nodes.getNode(config.deviceConfig);
-      this.action = config.action;
-      config.logDir = config.logDir || path.join('/data', 'logs', this.name);
-      this.logDir = config.logDir;
-      if (!fs.existsSync(config.logDir)) fs.mkdirSync(config.logDir, { recursive: true });
 
-      config.configDir = config.configDir || path.join('cams', 'configs');
-      if (!fs.existsSync(config.configDir)) fs.mkdirSync(config.configDir, { recursive: true });
-
-      this.on('input', this.onInput.bind(this));
       this.on('close', this.onClose.bind(this));
 
       if (this.deviceConfig) {
@@ -89,50 +94,6 @@ module.exports = function (RED) {
         this.onStatus(this.deviceConfig.xmeyeStatus);
 
         this.deviceConfig.initialize();
-      }
-    }
-
-    onInput (msg, send, done) {
-      msg.topic = this.action || msg.topic;
-      if (!msg.topic) done('When no action specified in the node, it should be specified in the msg.topic');
-      try {
-        switch (msg.topic) {
-        case 'listOptions':
-          switch(msg.payload) {
-          case 'getConfig':
-            msg.topic = 'listConfigs';
-            msg.payload = configKeys;
-            break;
-          case 'getChAbility':
-            msg.topic = 'listChAbilities';
-            msg.payload = chAbilityKeys;
-            break;
-          default: 
-            throw 'No options class specified, it should be specified in the msg.payload';
-          }
-          this.send(msg);
-          break;
-        case 'listConfigs':
-          msg.payload = configKeys;
-          this.send(msg);
-          break;
-        case 'listChAbilities':
-          msg.payload = chAbilityKeys;
-          this.send(msg);
-          break;
-        case 'devConfig':
-          if (this.deviceConfig) {
-            msg.payload = this.deviceConfig.devConfig;
-            this.send(msg);
-          }
-          break;
-        default:
-          return this.asyncAction(msg).then(()=>done()).catch(err=>done(err));
-        }
-        done();
-      }
-      catch (exc) {
-        done('Action ' + msg.topic + ' failed: ' + exc);
       }
     }
 
@@ -163,44 +124,81 @@ module.exports = function (RED) {
           this.status({fill: 'red', shape: 'ring', text: 'unknown'});
       }
     }
+  }
 
-    asyncAction(msg) {
-      switch (msg.topic) {
-      case 'sendMessage': return this.onSendMessage(msg.payload);
-      case 'getConfig': return this.sendCommand('CONFIG_GET', msg.payload, null, 'Config');
-      case 'getChAbility': return this.sendCommand('CHANNEL_ABILITY_GET', msg.payload, null, 'ChannelAbility');
-      case 'setConfig': return this.sendCommand('CONFIG_SET', msg.payload); //TODO
-      case 'playback': return this.onPlayback(msg);
-      case 'download': return this.onDownload(msg);
-      case 'opFileQuery': return this.executeHelper('FILESEARCH_REQ', 'OPFileQuery', msg.payload);
-      case 'setBrowserLanguage': return this.sendCommand('CONFIG_SET', 'BrowserLanguage', { BrowserLanguageType: msg.payload });
+  class XmeyeDeviceNode extends XmeyeBase {
+    constructor(config) {
+      super(config);
 
-      case 'getSystemTime': return this.sendCommand('TIMEQUERY_REQ', 'OPTimeQuery');
-      case 'getSystemFunction': return this.sendCommand('ABILITY_GET', 'SystemFunction', null, 'Ability'); //?
-      case 'getSystemInfo': return this.sendCommand('SYSINFO_REQ', 'SystemInfo', null, 'SysInfo');
-      case 'getStorageInfo': return this.sendCommand('SYSINFO_REQ', 'StorageInfo', null, 'SysInfo');
-      case 'getChannelTitle': return this.sendCommand('CONFIG_CHANNELTITLE_GET', 'ChannelTitle');
-      case 'getOPVersionList': return this.sendCommand('UPDATE_REQ', 'OPVersionList');
-      case 'getAuthorityList': return this.sendCommand('FULLAUTHORITYLIST_GET');
-      case 'getAuthorityGroups': return this.sendCommand('GROUPS_GET');
-      case 'getUsers': return this.sendCommand('USERS_GET');
-      case 'clearLogs': return this.executeHelper('SYSMANAGER_REQ', 'OPLogManager', { Action: 'RemoveAll' });
-      case 'rebootDevice': return this.executeHelper('SYSMANAGER_REQ', 'OPMachine', { Action: 'Reboot' });
-      case 'opLogsQuery': return this.executeHelper('LOGSEARCH_REQ', 'OPLogQuery', msg.payload);
-      default:
-        throw 'Action ' + msg.topic + ' is not supported';
+      this.action = config.action;
+
+      this.on('input', this.onInput.bind(this));
+    }
+
+    onInput (msg, send, done) {
+      msg.Action = this.action || msg.topic;
+      if (!msg.Action) return done('When no action specified in the node, it should be specified in the msg.topic');
+      if (typeof msg.Action != 'string') return done('msg.topic must be a string');
+      const parts = msg.Action.split('/');
+      if (parts.length > 1) msg.Action = parts[0];
+      try {
+        switch (msg.Action) {
+        case 'options':
+          if (parts.length < 2) throw 'Action ' + msg.topic + ' options group missing';
+          switch(parts[1]) {
+            case 'Command':
+              msg.options = Object.keys(MessageIds);
+              break;
+            case 'CONFIG_GET':
+              msg.options = configKeys;
+              break;
+            case 'CHANNEL_ABILITY_GET':
+              msg.options = chAbilityKeys;
+              break;
+            default: 
+              throw 'No options for group ' + parts[0] + ' specified';
+            }
+            this.send(msg);
+          break;
+        case 'config':
+          if (this.deviceConfig) {
+            msg.payload = this.deviceConfig.devConfig;
+            this.send(msg);
+          }
+          break;
+        default:
+          return this.asyncAction(msg, parts).then(()=>done()).catch(err=>done(err));
+        }
+        done();
+      }
+      catch (exc) {
+        done('Action ' + msg.topic + ' failed: ' + exc);
       }
     }
 
-    async onSendMessage(msg, Group) {
-      if (!msg) throw 'msg.payload not defined';
-      if (!this.deviceConfig.access) throw 'cam access object missing (1) for ' + this.deviceConfig.host;
+    asyncAction(msg, parts) {
+      switch (msg.Action) {
+      case 'send':
+        if (parts.length < 2) throw 'Action ' + msg.topic + ' Command missing';
+        msg.Command = parts[1];
+        msg.MessageName = (parts.length > 2) ? parts[2] : null;
+        msg.MessageData = (!msg.MessageName ? msg.payload : { [msg.MessageName]: msg.payload });
+        return this.onSendMessage(msg);
+      case 'connect': return this.deviceConfig.connect();
+      case 'disconnect': return this.deviceConfig.disconnect();
+      default: throw 'Action ' + msg.topic + ' is not supported';
+      }
+    }
 
-      const resp = await this.deviceConfig.access.sendMessage(msg);
+    async onSendMessage(msg) {
+      if (!msg) throw 'msg.payload not defined';
+
+      const group = cfgGroups.hasOwnProperty(msg.Command) ? cfgGroups[msg.Command] : null;
+      const resp = await this.deviceConfig.sendMessage(msg);
       if (resp) {
-        if (Group && (resp.Ret === 100)) {
+        if (group && (resp.Ret === 100)) {
           if (resp.data && resp.name) {
-            this.deviceConfig.updateConfig(Group, resp.name.replace(/(\[|\])/g, ''), resp.data);
+            this.deviceConfig.updateConfig(group, resp.name.replace(/(\[|\])/g, ''), resp.data);
             this.deviceConfig.saveConfig();
           }
           else {
@@ -212,6 +210,13 @@ module.exports = function (RED) {
         this.send(msg);
       }
     }
+  }
+
+  class XmeyeLifeNode extends XmeyeBase {
+    constructor(config) {
+      super(config);
+
+    }
 
     /**
      * Claim video stream on this connection, thus allowing the parent connection to start it
@@ -222,7 +227,7 @@ module.exports = function (RED) {
      * @param {string} [streamInfo.CombinMode='CONNECT_ALL'] Unknown. 'CONNECT_ALL' and 'NONE' work
      * @returns {Promise} Promise resolves with {@link DVRIPCommandResponse} of called underlying command
      */
-    async claimVideoStream(streamClient, {StreamType = 'Main', Channel = 0, CombinMode = 'CONNECT_ALL'}) {
+     async claimVideoStream(streamClient, {StreamType = 'Main', Channel = 0, CombinMode = 'CONNECT_ALL'}) {
       const OPMonitor = {
         Action: 'Claim',
         Parameter: {Channel, CombinMode, StreamType, TransMode: 'TCP'}
@@ -230,107 +235,252 @@ module.exports = function (RED) {
       const res = await streamClient.executeHelper('MONITOR_CLAIM', 'OPMonitor', OPMonitor);
       if (res.ErrorMessage) throw 'claimVideoStream failed err: ' + res.ErrorMessage;
 
-      streamClient.SocketTimeout = 5000;
+      streamClient.setTimeout(5000);
       streamClient.claimed = true;
     }
-    
-    async claimPlayback(streamClient, parameter, start, end) {
-      const OPPlayBack = {
-        Action : 'Claim',
-        EndTime : end,
-        Parameter : parameter,
-        StartTime : start
-      };
-  
-      let res = await streamClient.executeHelper('PLAY_CLAIM', 'OPPlayBack', OPPlayBack);
-      // {"Ret":100,"SessionID":"0x000000a1","name":"OPPlayBack"}
-      if (res.ErrorMessage) throw 'claimPlayback failed err: ' + res.ErrorMessage;
 
-      streamClient.SocketTimeout = 15000;
-      streamClient.claimed = true;
-    }
-  
-    async onPlayback(msg) {
-      // play sd record
-      if (!this.deviceConfig.access) {
-        throw 'cam access object missing (2) for ' + this.deviceConfig.host;
+    /**
+     * Grabs the video stream of the Device
+     *
+     * @param {Object} streamInfo
+     * @param {string} [streamInfo.StreamType='Main'] Substream to grab. Known to work are 'Main' and 'Extra1'
+     * @param {string} [streamInfo.Channel=0] Videochannel to grab. Probably only useful for DVR's and not for IP Cams
+     * @param {string} [streamInfo.CombinMode='CONNECT_ALL'] Unknown. 'CONNECT_ALL' and 'NONE' work
+     * @returns {Promise} Promise resolves with a {@link DVRIPStream} object
+     */
+    async getVideoStream({ StreamType = 'Main', Channel = 0, CombinMode = 'CONNECT_ALL' }) {
+      if (this._streamClient) throw 'There already is an active Videostream instance. Please call stopVideoStream before requesting a new one with this DVRIPClient instance';
+      //We gotta inline-require it because otherwise they would globally require each other.
+      this._streamClient = new (require('./dvripstreamclient.js'))(this._settings);
+      this._streamClient._isLoggedIn = true;
+      this._streamClient.setSessionId(this.SessionId);
+
+      try {
+        await this._streamClient.connect();
+        await this._streamClient.claimVideoStream(arguments[0]);
+
+        await this.executeHelper('MONITOR_REQ', 'OPMonitor', {
+          Action: 'Start',
+          Parameter: { Channel, CombinMode, StreamType, TransMode: 'TCP' }
+        });
+      } catch (err) {
+        this.disconnectMedia();
+
+        throw err;
       }
 
-      const record = this.getRecordFromFilename(msg.payload);
-      if (!record) throw 'can not get record from filename ' + msg.payload;
+      this._streamClient.on('connection:lost', () => {
+        this._streamClient = undefined;
 
-      const streamClient = new StreamClient(this.deviceConfig.accessSettings);
-      streamClient._type = 'DVRIPStreamClient'; //---
+        this.emit('videostream:lost');
+      });
+    }
+
+    /**
+     * Ends active video stream. Options have to match the getVideoStream() call
+     *
+     * @param {Object} streamInfo
+     * @param {string} [streamInfo.StreamType='Main'] Substream to end. Known to work are 'Main' and 'Extra1'
+     * @param {string} [streamInfo.Channel=0] Videochannel to end. Probably only useful for DVR's and not for IP Cams
+     * @param {string} [streamInfo.CombinMode='CONNECT_ALL'] Unknown. 'CONNECT_ALL' and 'NONE' work
+     * @returns {Promise} Promise resolves with {@link DVRIPCommandResponse} of called underlying command
+     */
+    async stopVideoStream({ StreamType = 'Main', Channel = 0, CombinMode = 'NONE' }) {
+      if (!this._streamClient) throw 'There no active Videostream instance';
+
+      try {
+        return await this.executeHelper('MONITOR_REQ', 'OPMonitor', {
+          Action: 'Stop',
+          Parameter: { Channel, CombinMode, StreamType, TransMode: 'TCP' }
+        });
+      } 
+      catch (err) {
+        throw err;
+      } 
+      finally {
+        const streamClient = this._streamClient;
+        if (streamClient) setImmediate(streamClient.disconnect.bind(this));
+        delete this._streamClient;
+      }
+    }
+  }
+
+  class XmeyePlaybackNode extends XmeyeBase {
+    constructor(config) {
+      super(config);
+
+      this.streamClient = null;
+      this.claimed = false;
+
+      config.logDir = config.logDir || path.join('/data', 'logs', this.name);
+      this.logDir = config.logDir;
+      if (!fs.existsSync(config.logDir)) fs.mkdirSync(config.logDir, { recursive: true });
+
+      this.on('input', this.onInput.bind(this));
+    }
+
+    onStatus(status) {
+      super.onStatus(status);
+
+      switch(status) {
+        case 'disconnected':
+          this.deinit();
+          break;
+      }
+    }
+
+    onInput (msg, send, done) {
+      msg.Action = msg.topic;
+      if (!msg.Action) return done('When no action specified in the node, it should be specified in the msg.topic');
+      if (typeof msg.Action != 'string') return done('msg.topic must be a string');
+      return this.asyncAction(msg).then(msg=>done(send(msg))).catch(err=>done('Action ' + msg.topic + ' failed: ' + err));
+    }
+  
+    asyncAction(msg) {
+      switch (msg.Action) {
+      case 'playback': return this.onPlayback(msg);
+      case 'download': return this.onDownload(msg);
+      default: throw 'Action ' + msg.topic + ' is not supported';
+      }
+    }
+
+    async init() {
+      if (this.streamClient) return;
+      const streamClient = this.deviceConfig.createConnection();
+      if (!streamClient) throw ('Init failed');
+
+      await streamClient.connect();
+      this.connected = true;
+
+      this.deviceConfig.connection.label = 'Main';
+
+      this.streamClient = streamClient;
+      this.streamClient.label = 'Media';
+      this.streamClient.on('data:eof', this.onDownloadReady.bind(this));
+      this.streamClient.on('data:video', this.onDataFrame.bind(this));
+      this.streamClient.on('data:audio', this.onDataFrame.bind(this));
+      this.streamClient.on('connection:lost', this.onConnectionClosed.bind(this));
+
+      this.log('Init success');
+    }
+
+    deinit() {
+      this.claimed = false;
+      if (!this.streamClient) return;
+
+      this.streamClient.off('data:eof', this.onDownloadReady.bind(this));
+      this.streamClient.off('data:video', this.onDataFrame.bind(this));
+      this.streamClient.off('data:audio', this.onDataFrame.bind(this));
+      this.streamClient.off('connection:lost', this.onConnectionClosed.bind(this));
+
+      if (this.connected) {
+        this.connected = false;
+        this.streamClient.disconnect().then(()=>{ this.streamClient = null; });
+      }
+      else this.streamClient = null;
+    }
+
+    async onPlayback(msg) {
+      // play sd record
+      const record = this.getRecordFromFilename(msg.payload);
+      if (!record) return Promise.reject('can not get record from filename ' + msg.payload);
+
+      const streamClient = this.streamClient;
       streamClient.on('connection:lost', () => {
         this.log('Record downloaded ' + recPath);
-        try {
-        }
-        catch (e) {} //???
-        this.send([msg]);
       });
 
       try {
         // this.log('Try get stream!');
         await this.reqPlayback(streamClient, record);
-        streamClient.onVideoFrame = (data)=>{ this.send([null, {payload: data}]); };
+        streamClient.onVideoFrame = (data)=>{ 
+          msg.payload = data;
+          this.send(msg); 
+        };
         this.log('Got stream!');
         // this.log('Got stream!');
       }
       catch (e) {
         streamClient.disconnect();
-        throw 'Playback reqPlayback filed:' + e;
+        return Promise.reject('Playback reqPlayback filed:' + e);
       }
+      return Promise.resolve(msg);
+    }
+
+    cleanup(disconnect = true) {
+      if (disconnect) this.deinit();
+      if (this.fd) {
+        fs.closeSync(this.fd);
+        this.fd = null;
+      }
+      if (this.started) {
+        this.started = false;
+        try {
+          this.controlPlayback('Stop');
+        }
+        catch (e) {
+          this.log('Cleanup failed:' + e);
+        }
+        this.record = null;
+      }
+    }
+
+    onDownloadReady() {
+      this.cleanup(false);
+      this.log(`Record downloaded (${this.download.recSize}bytes) to ${this.download.recPath}`);
+      this.send({ payload: this.download });
+    }
+
+    onConnectionClosed() {
+      this.cleanup();
+      this.error('connection lost');
+    }
+
+    onDataFrame(data) {
+      if (!this.fd) return;
+      this.download.recSize += data.length;
+      fs.writeSync(this.fd, data); 
     }
 
     async onDownload(msg) {
-      if (!this.deviceConfig.access) {
-        throw 'cam access object missing (4) for ' + this.deviceConfig.host;
-      }
+      if (!msg.payload) throw ('msg.payload is emply, must contain filename');
 
-      if (!msg.payload) throw 'msg.payload is emply, must contain filename';
+      if (this.started) throw ('Playback already running'); //TODO restart
 
       const record = this.getRecordFromFilename(msg.payload);
-      if (!record) throw 'can not get record from filename ' + msg.payload;
+      if (!record) throw ('can not get record from filename ' + msg.payload);
 
-      const recPath = this.getRecordPathFromFilename(record.FileName);
-      const fd = recPath ? fs.openSync(recPath, 'w', 0o666) : null;
-      if (!fd) throw 'openSync Failed, fd:' + fd + ', ' + recPath;
+      const recPath = msg.filename || this.getRecordPathFromFilename(record.FileName);
+      //TODO return if file exists
+
+      this.fd = recPath ? fs.openSync(recPath, 'w', 0o666) : null;
+      if (!this.fd) throw ('openSync Failed, fd:' + this.fd + ', ' + recPath);
       
-      const streamClient = new StreamClient(this.deviceConfig.accessSettings);
-      streamClient._type = 'DVRIPStreamClient'; //---
-      streamClient.on('connection:lost', () => {
-        this.log('Record downloaded ' + recPath);
-        try {
-          fs.closeSync(fd);
-        }
-        catch (e) {} //???
-        this.send([msg]); //???
-      });
-
+      this.download = { recPath, recSize: 0 }; 
+  
       try {
-        // this.log('Try get stream!');
-        await this.reqPlayback(streamClient, record);
-        streamClient.onVideoFrame = (data)=>{ fs.writeSync(fd, data); };
-        // this.log('Got stream!');
+        await this.init();
       }
-      catch (e) {
-        streamClient.disconnect();
-        fs.closeSync(fd);
-        throw 'Download reqPlayback failed:' + e;
+      catch(e) {
+        cleanup(false);
+        throw ('createConnection for download fialed');
       }
+
+      await this.reqPlayback(record);
     }
 
-    async reqPlayback(streamClient, query) {
+    async reqPlayback(query) {
       const file = query.FileName;
       const start = query.BeginTime;
       const end = query.EndTime;
       this.log(`Request playback ${file} (${start})-(${end})`);
   
-      streamClient.reuseSession(this.deviceConfig.access.SessionId);
-
-      try {
-        await streamClient.connect();
-        const parameter = {
+      await this.init();
+      
+      this.record = {
+        Action : '',
+        EndTime : end,
+        Parameter : {
           FileName: file,
           IntelligentPlayBackEvent: '',
           IntelligentPlayBackSpeed: 0,
@@ -338,24 +488,47 @@ module.exports = function (RED) {
           StreamType: 0,
           TransMode: 'TCP',
           Value: 0
-        };
-        
-        await this.claimPlayback(streamClient, parameter, start, end);
+        },
+        StartTime : start
+      };
+      await this.claimPlayback();
+      await this.controlPlayback('Start');
+      this.started = true;
+    }
 
-        await this.executeHelper('PLAY_REQ', 'OPPlayBack', {
-          EndTime: end,
-          Action: 'Start',
-          Parameter: parameter,
-          StartTime: start
-        });
-        //this.log('-- playback started');
-      } 
-      catch (err) {
-        throw err;
+    async claimPlayback() {
+      if (this.claimed) return;
+
+      this.record.Action = 'Claim';
+      const msg = {
+        Command: 'PLAY_CLAIM',
+        MessageName: 'OPPlayBack',
+        MessageData: { OPPlayBack: this.record }
+      }
+      const res = await this.streamClient.sendMessage(msg);
+      if (res.ErrorMessage) {
+        this.log('Claim playback failed: ' + res.ErrorMessage);
+        throw ('claimPlayback:' + res.ErrorMessage);
+      }
+
+      this.streamClient.setTimeout(15000);
+      this.claimed = true;
+    }
+
+    async controlPlayback(action) {
+      this.record.Action = action;
+      const msg = {
+        Command: 'PLAY_REQ',
+        MessageName: 'OPPlayBack',
+        MessageData: { OPPlayBack: this.record }
+      }
+      const res = await this.deviceConfig.sendMessage(msg);
+      if (res.ErrorMessage) {
+        this.log(action  + ' playback failed: ' + res.ErrorMessage);
+        throw ('claimPlayback:' + res.ErrorMessage);
       }
     }
 
-    //helpers
     getRecordPathFromFilename(filename) {
       // '/idea0/2021-11-12/001/21.00.40-21.00.49[M][@54ff][0].h264';
       const re = /\/.*\/([0-9]+)-([0-9]+)-([0-9]+)\/.*\/([0-9.]+)-([0-9.]+).*/g;
@@ -369,11 +542,6 @@ module.exports = function (RED) {
         EndTime: parts[5].split('.').join('')
       };
 
-      //--
-      // const dir = path.join(this.logDir, data.Year, data.Year + data.Month, data.Year + data.Month + data.Day);
-      // if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      // return path.join(dir, `${data.BeginTime}_${data.EndTime}.h264`);
-
       const dir = path.join(this.logDir, data.Year, data.Year + data.Month);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       return path.join(dir, `${data.Year + data.Month + data.Day}_${data.BeginTime}_${data.EndTime}.h264`);
@@ -384,26 +552,82 @@ module.exports = function (RED) {
       const re = /\/.*\/([0-9\-]+)\/.*\/([0-9.]+)-([0-9.]+).*/g;
       const parts = re.exec(filename);
       if (!parts || parts.length !== 4) return null
-      const record = {
+      return {
         FileName: filename,
         Date: parts[1],
         BeginTime: `${parts[1]} ${parts[2]}`,
         EndTime: `${parts[1]} ${parts[3]}`
       };
-      return record;
+    }
+  }
+
+  class XmeyeFrameParserNode {
+    constructor(config) {
+      RED.nodes.createNode(this, config);
+
+      //this._deviceConfig = RED.nodes.getNode(config.deviceConfig);
+
+      this._commandParser = new FrameParser();
+      this._commandParser.onResponse = this.onResponse.bind(this);
+      this._commandParser.onMediaFrame = this.onMediaFrame.bind(this);
+  
+      this._receiver = new FrameAssembler(this._commandParser);
+  
+      this.on('input', this.onInput.bind(this));
+      this.on('close', this.onClose.bind(this));
     }
 
-    sendCommand(Command, MessageName, MessageData, Group) {
-      return this.onSendMessage({ Command, MessageName, MessageData}, Group);
+    onInput (msg, send, done) {
+      try {
+        this._receiver.applyData(msg);
+        done();
+      }
+      catch (exc) {
+        done('Action ' + msg.topic + ' failed: ' + exc);
+      }
     }
 
-    executeHelper(Command, MessageName, MessageData) {
-      //Some messages (E.g.) the LOGIN_REQ2 do not actually have a MessageName...
-      //thus we obviously cannot wrap the data of those like we have to with other messages
-      MessageData = (!MessageName ? MessageData : { [MessageName]: MessageData });
-      return this.sendCommand(Command, MessageName, MessageData);
+    onClose(done) {
+      done();
+    }
+
+    onResponse(frame) {
+      this.send(frame);
+    }
+    
+    onMediaFrame(frame) {
+    }    
+  }
+
+  class XmeyeFrameBuilderNode {
+    constructor(config) {
+      RED.nodes.createNode(this, config);
+
+      this.deviceConfig = RED.nodes.getNode(config.deviceConfig);
+
+      this.on('input', this.onInput.bind(this));
+      this.on('close', this.onClose.bind(this));
+    }
+
+    onInput (msg, send, done) {
+      try {
+        if (!msg.SessionId) return done('msg.SessionId not defined');
+        if (!msg.SequenceID) return done('msg.SequenceID not defined');
+        send(FrameBuilder.buildMessage(msg, this.SessionId.buffer, this._cmdSeq++));
+        done();
+      }
+      catch (exc) {
+        done('Action ' + msg.topic + ' failed: ' + exc);
+      }
+    }
+
+    onClose(done) {
+      done();
     }
   }
 
   RED.nodes.registerType('xmeye-device', XmeyeDeviceNode);
+  RED.nodes.registerType('xmeye-playback', XmeyePlaybackNode);
+  RED.nodes.registerType('xmeye-frame-parser', XmeyeFrameParserNode);
+  RED.nodes.registerType('xmeye-frame-builder', XmeyeFrameBuilderNode);
 }
