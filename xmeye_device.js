@@ -216,91 +216,129 @@ module.exports = function (RED) {
     constructor(config) {
       super(config);
 
+      this.streamClient;
+      this.claimed = false;
+
+      this.on('input', this.onInput.bind(this));
     }
 
-    /**
-     * Claim video stream on this connection, thus allowing the parent connection to start it
-     *
-     * @param {Object} streamInfo
-     * @param {string} [streamInfo.StreamType='Main'] Substream to claim. Known to work are 'Main' and 'Extra1'
-     * @param {string} [streamInfo.Channel=0] Videochannel to claim. Probably only useful for DVR's and not for IP Cams
-     * @param {string} [streamInfo.CombinMode='CONNECT_ALL'] Unknown. 'CONNECT_ALL' and 'NONE' work
-     * @returns {Promise} Promise resolves with {@link DVRIPCommandResponse} of called underlying command
-     */
-     async claimVideoStream(streamClient, {StreamType = 'Main', Channel = 0, CombinMode = 'CONNECT_ALL'}) {
-      const OPMonitor = {
-        Action: 'Claim',
-        Parameter: {Channel, CombinMode, StreamType, TransMode: 'TCP'}
-      };
-      const res = await streamClient.executeHelper('MONITOR_CLAIM', 'OPMonitor', OPMonitor);
+    onClose(done) {
+      this.cleanup();
+      super.onClose(done);
+    }
+
+    onInput (msg, send, done) {
+      if (!msg.Acion) return done('No action specified, it should be specified in the msg.Acion');
+      if (typeof msg.Acion != 'string') return done('msg.Acion must be a string');
+      try {
+        this.asyncAction(msg).then(msg=>done(send(msg))).catch(err=>done('Action ' + msg.Acion + ' failed: ' + err));
+      }
+      catch (e) {
+        this.cleanup();
+      }
+    }
+  
+    asyncAction(msg) {
+      if (!msg.StreamType) msg.StreamType = 'Main'; // Substream to claim. Known to work are 'Main' and 'Extra1'
+      if (!msg.Channel) msg.Channel = 0; // Videochannel to claim. Probably only useful for DVR's and not for IP Cams
+      if (!msg.CombinMode) msg.CombinMode = 'CONNECT_ALL'; // Unknown. 'CONNECT_ALL' and 'NONE' work
+      if (!msg.TransMode) msg.TransMode = 'TCP';
+
+      switch (msg.Acion) {
+      case 'Start': return this.startStream(msg);
+      case 'Stop': return this.stopStream(msg);
+      case 'Pause': return this.pauseStream(msg);
+      default: throw 'Action ' + msg.topic + ' is not supported';
+      }
+    }
+
+    cleanup() {
+      this.claimed = false;
+      const streamClient = this.streamClient;
+      if (streamClient) setImmediate(streamClient.disconnect());
+      this.streamClient = undefined;
+    }
+
+    // Grabs the video stream of the Device
+    async startStream(msg) { // { StreamType, Channel, CombinMode, TransMode }) {
+      if (this.streamClient) throw 'There already is an active Videostream instance. Please call stopVideoStream before requesting a new one with this DVRIPClient instance';
+
+      const streamClient = this.deviceConfig.createConnection();
+      if (!streamClient) throw ('Init failed');
+
+      await streamClient.connect();
+      await this.claimVideoStream(msg);
+
+      this.streamClient = streamClient;
+      this.streamClient.label = StreamType;
+
+      this.streamClient.on('data:eof', this.onEndOfStream.bind(this));
+      this.streamClient.on('data:video', this.onDataFrame.bind(this));
+      this.streamClient.on('data:audio', this.onDataFrame.bind(this));
+      this.streamClient.on('connection:lost', this.onConnectionClosed.bind(this));
+
+      await controlStream(msg);
+    }
+
+    // Claim video stream on this connection, thus allowing the parent connection to start it
+    async claimVideoStream({StreamType, Channel, CombinMode, TransMode}) {
+      if (this.claimed) return;
+      const res = await this.streamClient.sendMessage({
+        Command: 'MONITOR_CLAIM',
+        MessageName: 'OPMonitor',
+        MessageData: {
+          OPMonitor: {
+            Action: 'Claim',
+            Parameter: {Channel, CombinMode, StreamType, TransMode}
+          }
+        }
+      });
       if (res.ErrorMessage) throw 'claimVideoStream failed err: ' + res.ErrorMessage;
 
-      streamClient.setTimeout(5000);
-      streamClient.claimed = true;
+      this.streamClient.setTimeout(15000);
+      this.claimed = true;
+    };
+
+    onEndOfStream() {
+      this.log('Receive eond of stream');
     }
 
-    /**
-     * Grabs the video stream of the Device
-     *
-     * @param {Object} streamInfo
-     * @param {string} [streamInfo.StreamType='Main'] Substream to grab. Known to work are 'Main' and 'Extra1'
-     * @param {string} [streamInfo.Channel=0] Videochannel to grab. Probably only useful for DVR's and not for IP Cams
-     * @param {string} [streamInfo.CombinMode='CONNECT_ALL'] Unknown. 'CONNECT_ALL' and 'NONE' work
-     * @returns {Promise} Promise resolves with a {@link DVRIPStream} object
-     */
-    async getVideoStream({ StreamType = 'Main', Channel = 0, CombinMode = 'CONNECT_ALL' }) {
-      if (this._streamClient) throw 'There already is an active Videostream instance. Please call stopVideoStream before requesting a new one with this DVRIPClient instance';
-      //We gotta inline-require it because otherwise they would globally require each other.
-      this._streamClient = new (require('./dvripstreamclient.js'))(this._settings);
-      this._streamClient._isLoggedIn = true;
-      this._streamClient.setSessionId(this.SessionId);
+    onConnectionClosed() {
+      this.cleanup();
+      this.error('connection lost');
+    }
 
-      try {
-        await this._streamClient.connect();
-        await this._streamClient.claimVideoStream(arguments[0]);
+    onDataFrame(data) {
+      this.send(data); 
+    }
 
-        await this.executeHelper('MONITOR_REQ', 'OPMonitor', {
-          Action: 'Start',
-          Parameter: { Channel, CombinMode, StreamType, TransMode: 'TCP' }
-        });
-      } catch (err) {
-        this.disconnectMedia();
+    // Ends active video stream. Options have to match the getVideoStream() call
+    async stopStream(msg) {
+      if (!this.streamClient) throw 'There no active Videostream instance';
+      await controlStream(msg);
+      this.cleanup();
+    }
 
-        throw err;
-      }
+    async pauseStream(msg) {
+      if (!this.streamClient) throw 'There no active Videostream instance';
+      await controlStream(msg);
+    }
 
-      this._streamClient.on('connection:lost', () => {
-        this._streamClient = undefined;
-
-        this.emit('videostream:lost');
+    async controlStream({ Action, StreamType, Channel, CombinMode, TransMode }) {
+      this.record.Action = action;
+      const res = await this.deviceConfig.sendMessage({
+        Command: 'MONITOR_REQ',
+        MessageName: 'OPMonitor',
+        MessageData: {
+          OPMonitor: {
+            Action,
+            Parameter: { Channel, CombinMode, StreamType, TransMode } 
+          }
+        }
       });
-    }
-
-    /**
-     * Ends active video stream. Options have to match the getVideoStream() call
-     *
-     * @param {Object} streamInfo
-     * @param {string} [streamInfo.StreamType='Main'] Substream to end. Known to work are 'Main' and 'Extra1'
-     * @param {string} [streamInfo.Channel=0] Videochannel to end. Probably only useful for DVR's and not for IP Cams
-     * @param {string} [streamInfo.CombinMode='CONNECT_ALL'] Unknown. 'CONNECT_ALL' and 'NONE' work
-     * @returns {Promise} Promise resolves with {@link DVRIPCommandResponse} of called underlying command
-     */
-    async stopVideoStream({ StreamType = 'Main', Channel = 0, CombinMode = 'NONE' }) {
-      if (!this._streamClient) throw 'There no active Videostream instance';
-
-      try {
-        return await this.executeHelper('MONITOR_REQ', 'OPMonitor', {
-          Action: 'Stop',
-          Parameter: { Channel, CombinMode, StreamType, TransMode: 'TCP' }
-        });
-      } 
-      catch (err) {
-        throw err;
-      } 
-      finally {
-        const streamClient = this._streamClient;
-        if (streamClient) setImmediate(streamClient.disconnect.bind(this));
-        delete this._streamClient;
+      if (res.ErrorMessage) {
+        this.log(action  + ' playback failed: ' + res.ErrorMessage);
+        throw ('claimPlayback:' + res.ErrorMessage);
       }
     }
   }
@@ -309,7 +347,7 @@ module.exports = function (RED) {
     constructor(config) {
       super(config);
 
-      this.streamClient = null;
+      this.streamClient = undefined;
       this.claimed = false;
 
       config.logDir = config.logDir || path.join('/data', 'logs', this.name);
@@ -329,8 +367,13 @@ module.exports = function (RED) {
       }
     }
 
+    onClose(done) {
+      this.cleanup();
+      super.onClose(done);
+    }
+
     onInput (msg, send, done) {
-      msg.Action = msg.topic;
+      msg.Action = msg.topic /*|| this.config.action*/;
       if (!msg.Action) return done('When no action specified in the node, it should be specified in the msg.topic');
       if (typeof msg.Action != 'string') return done('msg.topic must be a string');
       return this.asyncAction(msg).then(msg=>done(send(msg))).catch(err=>done('Action ' + msg.topic + ' failed: ' + err));
@@ -340,6 +383,11 @@ module.exports = function (RED) {
       switch (msg.Action) {
       case 'playback': return this.onPlayback(msg);
       case 'download': return this.onDownload(msg);
+      case 'downloadExisting': return this.onDownload(msg);
+      case 'playCache': // TODO
+      case 'playDevice': // TODO
+      case 'deleteCache': // TODO
+      case 'deleteDevice': // TODO
       default: throw 'Action ' + msg.topic + ' is not supported';
       }
     }
@@ -352,10 +400,10 @@ module.exports = function (RED) {
       await streamClient.connect();
       this.connected = true;
 
-      this.deviceConfig.connection.label = 'Main';
+      this.deviceConfig.connection.label = 'Control';
 
       this.streamClient = streamClient;
-      this.streamClient.label = 'Media';
+      this.streamClient.label = 'Playback';
       this.streamClient.on('data:eof', this.onDownloadReady.bind(this));
       this.streamClient.on('data:video', this.onDataFrame.bind(this));
       this.streamClient.on('data:audio', this.onDataFrame.bind(this));
@@ -375,9 +423,10 @@ module.exports = function (RED) {
 
       if (this.connected) {
         this.connected = false;
+        
         this.streamClient.disconnect().then(()=>{ this.streamClient = null; });
       }
-      else this.streamClient = null;
+      else this.streamClient = undefined;
     }
 
     async onPlayback(msg) {
@@ -392,7 +441,7 @@ module.exports = function (RED) {
 
       try {
         // this.log('Try get stream!');
-        await this.reqPlayback(streamClient, record);
+        await this.reqPlayback(streamClient, record); //<-- ??? reqPlayback supports only one parameter
         streamClient.onVideoFrame = (data)=>{ 
           msg.payload = data;
           this.send(msg); 
@@ -405,6 +454,11 @@ module.exports = function (RED) {
         return Promise.reject('Playback reqPlayback filed:' + e);
       }
       return Promise.resolve(msg);
+    }
+
+    getFfmpegCommand(filename) {
+      //spawn
+      return `ffmpeg -loglevel quiet -i ${filename} -c copy  -f mp4 -movflags +frag_keyframe+empty_moov+default_base_moof pipe:1`;
     }
 
     cleanup(disconnect = true) {
@@ -428,7 +482,8 @@ module.exports = function (RED) {
     onDownloadReady() {
       this.cleanup(false);
       this.log(`Record downloaded (${this.download.recSize}bytes) to ${this.download.recPath}`);
-      this.send({ payload: this.download });
+      this.download.recSize = this.download.downloaded;
+      this.send({ payload: this.download, filename: this.download.recPath, ready: true });
     }
 
     onConnectionClosed() {
@@ -438,8 +493,10 @@ module.exports = function (RED) {
 
     onDataFrame(data) {
       if (!this.fd) return;
-      this.download.recSize += data.length;
-      fs.writeSync(this.fd, data); 
+      //-- this.download.recSize += data.length;
+      this.download.downloaded += data.length;
+      fs.writeSync(this.fd, data);
+      this.send({ payload: this.download, filename: this.download.recPath, ready: false });
     }
 
     async onDownload(msg) {
@@ -447,7 +504,9 @@ module.exports = function (RED) {
 
       if (this.started) throw ('Playback already running'); //TODO restart
 
-      const record = this.getRecordFromFilename(msg.payload);
+      const filename = (typeof msg.payload === 'string') ? msg.payload : msg.payload.FileName;
+      const recSize = (typeof msg.payload === 'string') ? 0 : parseInt(msg.payload.FileLength);
+      const record = this.getRecordFromFilename(filename);
       if (!record) throw ('can not get record from filename ' + msg.payload);
 
       const recPath = msg.filename || this.getRecordPathFromFilename(record.FileName);
@@ -456,7 +515,7 @@ module.exports = function (RED) {
       this.fd = recPath ? fs.openSync(recPath, 'w', 0o666) : null;
       if (!this.fd) throw ('openSync Failed, fd:' + this.fd + ', ' + recPath);
       
-      this.download = { recPath, recSize: 0 }; 
+      this.download = { recPath, recSize, downloaded : 0 }; 
   
       try {
         await this.init();
@@ -627,6 +686,7 @@ module.exports = function (RED) {
   }
 
   RED.nodes.registerType('xmeye-device', XmeyeDeviceNode);
+  RED.nodes.registerType('xmeye-life', XmeyeLifeNode);
   RED.nodes.registerType('xmeye-playback', XmeyePlaybackNode);
   RED.nodes.registerType('xmeye-frame-parser', XmeyeFrameParserNode);
   RED.nodes.registerType('xmeye-frame-builder', XmeyeFrameBuilderNode);

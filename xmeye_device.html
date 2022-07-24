@@ -17,6 +17,24 @@
     }
   });
 
+  RED.nodes.registerType('xmeye-life',{
+    category: 'Xmeye',
+    color: '#7171d5',
+    defaults: {
+      name: {value:""},
+      deviceConfig: {value:"", type: "xmeye-config"},
+      action: {value:""}
+    },          
+    inputs:1,
+    outputs:1,
+    icon: "recording.png",
+    label: function() {
+      return this.name || "Xmeye playback";
+    },
+    oneditsave: function() {
+    }
+  });
+
   RED.nodes.registerType('xmeye-playback',{
     category: 'Xmeye',
     color: '#7171d5',
@@ -24,6 +42,7 @@
       name: {value:""},
       deviceConfig: {value:"", type: "xmeye-config"},
       logDir: {value:""},
+      action: {value:""}
     },          
     inputs:1,
     outputs:1,
@@ -83,7 +102,36 @@
     <label for="node-input-action"><i class="fa fa-wrench"></i> Action</label>
     <select id="node-input-action">
       <option value=""></option>
-      <option value="parValue1">First valid value</option>
+      <!-- <option value="send">Send command</option> -->
+      <!-- <option value="options">Get command options</option> -->
+      <option value="config">Get device config (config)</option>
+      <option value="options">Get device options (options)</option>
+      <option value="connect">Connect device (connect)</option>
+      <option value="disconnect">Disconnect device (disconnect)</option>
+      <option value="send">Send command to device (send)</option>
+    </select>
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/html" data-template-name="xmeye-life">
+  <div class="form-row">
+    <label for="node-input-deviceConfig"><i class="fa fa-cog"></i> Device</label>
+    <!-- Node-Red will replace this input element by a drop-down (with available Xmeye device configurations) -->
+    <input type="text" id="node-input-deviceConfig">
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-action"><i class="fa fa-wrench"></i> Action</label>
+    <select id="node-input-action">
+      <option value=""></option>
+      <option value="Start">Start life stream (Start)</option>
+      <option value="Stop">Stop life stream (Stop)</option>
+      <option value="Pause">Pause life stream (Pause)</option>
     </select>
   </div>
   <br>
@@ -103,6 +151,20 @@
   <div class="form-row">
     <label for="node-input-logDir"><i class="icon-tag"></i> Log dir</label>
     <input type="text" id="node-input-logDir" placeholder="data/logs">
+  </div>
+  <br>
+  <div class="form-row">
+    <label for="node-input-action"><i class="fa fa-wrench"></i> Action</label>
+    <select id="node-input-action">
+      <option value=""></option>
+      <option value="playback">Download and replay (playback)</option>
+      <option value="download">Download record to cache (download)</option>
+      <option value="downloadExisting">Force download record to cache (downloadExisting)</option>
+      <option value="playCache">(todo) Replay from cache (playCache)</option>
+      <option value="playDevice">(todo) Replay from device (playDevice)</option>
+      <option value="deleteCache">(todo) Delete record in cache (deleteCache)</option>
+      <option value="deleteDevice">(todo) Delete record in device (deleteDevice)</option>
+    </select>
   </div>
   <br>
   <div class="form-row">
@@ -145,12 +207,22 @@
   The action that needs to be executed on the target device.  When no action is selected, the action should be specified in the <code>msg.action</code> field of the input message.</p>
 </script>
 
+<script type="text/html" data-help-name="xmeye-life">
+  <p>A node to get extra information about an Xmeye device.</p>
+  <p><strong>Device:</strong><br/>
+  The target Xmeye device.</p>
+  <p><strong>Action:</strong><br/>
+  The action that needs to be executed on the target device.  When no action is selected, the action should be specified in the <code>msg.Action</code> field of the input message.</p>
+</script>
+
 <script type="text/html" data-help-name="xmeye-playback">
   <p>A node to get extra information about an Xmeye device.</p>
   <p><strong>Device:</strong><br/>
   The target Xmeye device.</p>
   <p><strong>LogDir:</strong><br/>
-  The directory path used to store the downloaded rcords. When no path is selected, the default path: /data/logs will be used.</p>
+  The directory path used to store the downloaded records. When no path is selected, the default path: /data/logs will be used.</p>
+  <p><strong>Action:</strong><br/>
+  The action that needs to be executed on the target device.  When no action is selected, the action should be specified in the <code>msg.Action</code> field of the input message.</p>
 </script>
 
 <script type="text/html" data-help-name="xmeye-frame-parser">

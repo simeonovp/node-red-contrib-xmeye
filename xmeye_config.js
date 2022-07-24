@@ -66,7 +66,7 @@ module.exports = function (RED) {
 
     onClose(done) {
       if (this.connection) this.connection.disconnect();
-      this.setStatus(this, '');
+      this.setStatus('');
       this.removeAllListeners('xmeye_status');
       if (done) done();
     }
