@@ -89,6 +89,21 @@
     oneditsave: function() {
     }
   });
+
+  RED.nodes.registerType('xmeye-pcap-reader',{
+    category: 'Xmeye',
+    color: '#7171d5',
+    defaults: {
+      name: {value:""},
+      camip: {value:""},
+      camport: {value:"34567"},
+      cammac: {value:""}
+    },          
+    inputs:1,
+    outputs:1,
+    icon: "config.png",
+    label: function() { return this.name || "Xmeye PCAP reader"; }
+  });
 </script>
 
 <script type="text/html" data-template-name="xmeye-device">
@@ -196,6 +211,25 @@
   <div class="form-row">
     <label for="node-input-name"><i class="icon-tag"></i> Name</label>
     <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+</script>
+
+<script type="text/html" data-template-name="xmeye-pcap-reader">
+  <div class="form-row">
+    <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name">
+  </div>
+  <div class="form-row">
+    <label for="node-input-camip"> IP</label>
+    <input type="text" id="node-input-camip">
+  </div>
+  <div class="form-row">
+    <label for="node-input-camport"> Port</label>
+    <input type="text" id="node-input-camport">
+  </div>
+  <div class="form-row">
+    <label for="node-input-cammac"> MAC</label>
+    <input type="text" id="node-input-cammac">
   </div>
 </script>
 

@@ -7,6 +7,7 @@ module.exports = function (RED) {
   const FrameParser = require('./lib/FrameParser');
   const FrameAssembler = require('./lib/FrameAssembler');
   const FrameBuilder = require('./lib/FrameBuilder');
+  const XmeyeInterpretter = require('xmeye-js-lib/Interpretter');
 
   const configKeys = [
     'System.ExUserMap',
@@ -685,9 +686,32 @@ module.exports = function (RED) {
     }
   }
 
+  class XmeyePcapReader {
+    constructor(config) {
+      RED.nodes.createNode(this, config);
+
+      this.config = config; //TODO convert to Buffer
+      this.on('input', this.onInput.bind(this));
+    }
+   
+    onInput (msg, send, done) {
+      let interpretter = new XmeyeInterpretter();
+      interpretter.onRequest = (frame => {
+        //console.log(`XmeyeRequest: ${JSON.stringify(frame, null, 2)}`);
+        send({ payload: { XmeyeRequest: frame } });
+      });
+      interpretter.onResponse = (frame => {
+        //console.log(`XmeyeResponse: ${JSON.stringify(frame, null, 2)}`);
+        send({ payload: { XmeyeResponse: frame } });
+      });
+      interpretter.parse(msg.payload, this.config);
+    }
+  }
+
   RED.nodes.registerType('xmeye-device', XmeyeDeviceNode);
   RED.nodes.registerType('xmeye-life', XmeyeLifeNode);
   RED.nodes.registerType('xmeye-playback', XmeyePlaybackNode);
   RED.nodes.registerType('xmeye-frame-parser', XmeyeFrameParserNode);
   RED.nodes.registerType('xmeye-frame-builder', XmeyeFrameBuilderNode);
+  RED.nodes.registerType('xmeye-pcap-reader', XmeyePcapReader);
 }
